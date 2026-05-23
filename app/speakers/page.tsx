@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Pencil, Trash2, Plus, X, Save } from "lucide-react";
+import { Pencil, Trash2, Plus, X, Save, GripVertical } from "lucide-react";
 
 interface Speaker {
   _id: string;
@@ -11,6 +11,7 @@ interface Speaker {
   abstract: string;
   imageUrl: string;
   bio: string;
+  order: number;
 }
 
 export default function SpeakersPage() {
@@ -18,6 +19,8 @@ export default function SpeakersPage() {
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingSpeaker, setEditingSpeaker] = useState<Speaker | null>(null);
+  const [isRearrangeMode, setIsRearrangeMode] = useState(false);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [formData, setFormData] = useState({
     name: "",
     role: "",
@@ -34,6 +37,10 @@ export default function SpeakersPage() {
     try {
       const res = await fetch("/api/speakers");
       if (!res.ok) throw new Error("Failed to fetch speakers");
+      // const data = await res.json();
+      // // Sort speakers by order
+      // const sortedSpeakers = data.sort((a: Speaker, b: Speaker) => (a.order || 0) - (b.order || 0));
+      // setSpeakers(sortedSpeakers);
       const data = await res.json();
       setSpeakers(data);
     } catch (error) {
@@ -48,7 +55,9 @@ export default function SpeakersPage() {
     fetchSpeakers();
   }, []);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const handleInputChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value,
@@ -77,6 +86,8 @@ export default function SpeakersPage() {
       formDataToSend.append("talkTitle", formData.talkTitle);
       formDataToSend.append("abstract", formData.abstract);
       formDataToSend.append("bio", formData.bio);
+      // Set order to the end of the list
+      formDataToSend.append("order", String(speakers.length));
       if (formData.image) {
         formDataToSend.append("image", formData.image);
       }
@@ -96,7 +107,9 @@ export default function SpeakersPage() {
       resetForm();
     } catch (error) {
       console.error("Error creating speaker:", error);
-      setError(error instanceof Error ? error.message : "Failed to create speaker");
+      setError(
+        error instanceof Error ? error.message : "Failed to create speaker",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -106,7 +119,7 @@ export default function SpeakersPage() {
   const handleUpdateSpeaker = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingSpeaker) return;
-    
+
     setSubmitting(true);
     setError(null);
 
@@ -135,7 +148,9 @@ export default function SpeakersPage() {
       resetForm();
     } catch (error) {
       console.error("Error updating speaker:", error);
-      setError(error instanceof Error ? error.message : "Failed to update speaker");
+      setError(
+        error instanceof Error ? error.message : "Failed to update speaker",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -158,7 +173,73 @@ export default function SpeakersPage() {
       await fetchSpeakers();
     } catch (error) {
       console.error("Error deleting speaker:", error);
-      setError(error instanceof Error ? error.message : "Failed to delete speaker");
+      setError(
+        error instanceof Error ? error.message : "Failed to delete speaker",
+      );
+      setTimeout(() => setError(null), 3000);
+    }
+  };
+
+  // Drag and drop reordering
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    e.dataTransfer.setData("text/plain", String(index));
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverIndex(index);
+  };
+
+  const handleDragLeave = () => {
+    setDragOverIndex(null);
+  };
+
+  const handleDrop = async (e: React.DragEvent, dropIndex: number) => {
+    e.preventDefault();
+    setDragOverIndex(null);
+
+    const dragIndex = parseInt(e.dataTransfer.getData("text/plain"));
+    if (dragIndex === dropIndex) return;
+
+    // Create new order
+    const newSpeakers = [...speakers];
+    const [draggedSpeaker] = newSpeakers.splice(dragIndex, 1);
+    newSpeakers.splice(dropIndex, 0, draggedSpeaker);
+
+    // Update order numbers
+    const updatedSpeakers = newSpeakers.map((speaker, idx) => ({
+      ...speaker,
+      order: idx,
+    }));
+
+    // Update UI immediately
+    setSpeakers(updatedSpeakers);
+
+    // Save to database
+    try {
+      const updates = updatedSpeakers.map((speaker, idx) => ({
+        id: speaker._id,
+        order: idx,
+      }));
+
+      const res = await fetch("/api/speakers/reorder", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ updates }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to update order");
+      }
+    } catch (error) {
+      console.error("Error updating speaker order:", error);
+      setError("Failed to save new order. Please try again.");
+      // Revert to original order on error
+      await fetchSpeakers();
       setTimeout(() => setError(null), 3000);
     }
   };
@@ -185,7 +266,6 @@ export default function SpeakersPage() {
       abstract: "To be Updated Soon",
       bio: "To be Updated Soon",
       image: null,
-
     });
   };
 
@@ -194,6 +274,47 @@ export default function SpeakersPage() {
     setEditingSpeaker(null);
     resetForm();
     setError(null);
+  };
+
+  const toggleRearrangeMode = () => {
+    setIsRearrangeMode(!isRearrangeMode);
+    setDragOverIndex(null);
+  };
+
+  const saveRearrangeOrder = async () => {
+    try {
+      const updates = speakers.map((speaker, idx) => ({
+        id: speaker._id,
+        order: idx,
+      }));
+
+      const res = await fetch("/api/speakers/reorder", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ updates }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to save order");
+      }
+
+      setError(null);
+      setIsRearrangeMode(false);
+      // Show success message
+      const successMsg = document.createElement("div");
+      successMsg.className =
+        "fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg animate-fadeIn";
+      successMsg.textContent = "Order saved successfully!";
+      document.body.appendChild(successMsg);
+      setTimeout(() => successMsg.remove(), 3000);
+    } catch (error) {
+      console.error("Error saving order:", error);
+      setError("Failed to save order. Please try again.");
+      await fetchSpeakers(); // Revert to original order
+      setTimeout(() => setError(null), 3000);
+    }
   };
 
   if (loading) {
@@ -217,20 +338,61 @@ export default function SpeakersPage() {
               <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
                 Conference Speakers
               </h1>
-              <p className="text-gray-300 mt-2">Meet our distinguished speakers</p>
+              <p className="text-gray-300 mt-2">
+                {isRearrangeMode
+                  ? "Drag and drop to reorder speakers"
+                  : "Meet our distinguished speakers"}
+              </p>
             </div>
-            <button
-              onClick={() => {
-                setShowAddForm(true);
-                setEditingSpeaker(null);
-                resetForm();
-                setError(null);
-              }}
-              className="group bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white px-6 py-3 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105"
-            >
-              <Plus className="w-5 h-5" />
-              Add New Speaker
-            </button>
+            <div className="flex gap-3">
+              {!isRearrangeMode && (
+                <button
+                  onClick={() => {
+                    setShowAddForm(true);
+                    setEditingSpeaker(null);
+                    resetForm();
+                    setError(null);
+                  }}
+                  className="group bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white px-6 py-3 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105"
+                >
+                  <Plus className="w-5 h-5" />
+                  Add New Speaker
+                </button>
+              )}
+              {speakers.length > 0 && (
+                <button
+                  onClick={
+                    isRearrangeMode ? saveRearrangeOrder : toggleRearrangeMode
+                  }
+                  className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105 ${
+                    isRearrangeMode
+                      ? "bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white"
+                      : "bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white"
+                  }`}
+                >
+                  {isRearrangeMode ? (
+                    <>
+                      <Save className="w-5 h-5" />
+                      Save Order
+                    </>
+                  ) : (
+                    <>
+                      <GripVertical className="w-5 h-5" />
+                      Rearrange
+                    </>
+                  )}
+                </button>
+              )}
+              {isRearrangeMode && (
+                <button
+                  onClick={toggleRearrangeMode}
+                  className="px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105"
+                >
+                  <X className="w-5 h-5" />
+                  Cancel
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -260,7 +422,12 @@ export default function SpeakersPage() {
                 </button>
               </div>
 
-              <form onSubmit={editingSpeaker ? handleUpdateSpeaker : handleCreateSpeaker} className="p-6 space-y-5">
+              <form
+                onSubmit={
+                  editingSpeaker ? handleUpdateSpeaker : handleCreateSpeaker
+                }
+                className="p-6 space-y-5"
+              >
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Name *
@@ -318,7 +485,7 @@ export default function SpeakersPage() {
                     placeholder="Abstract of the talk..."
                   />
                 </div>
-                 <div>
+                <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Bio
                   </label>
@@ -335,8 +502,16 @@ export default function SpeakersPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Profile Image *
-                    {!editingSpeaker && <span className="text-red-400 ml-1">(Required for new speaker)</span>}
-                    {editingSpeaker && <span className="text-gray-400 ml-1">(Optional - leave empty to keep current)</span>}
+                    {!editingSpeaker && (
+                      <span className="text-red-400 ml-1">
+                        (Required for new speaker)
+                      </span>
+                    )}
+                    {editingSpeaker && (
+                      <span className="text-gray-400 ml-1">
+                        (Optional - leave empty to keep current)
+                      </span>
+                    )}
                   </label>
                   <input
                     type="file"
@@ -354,7 +529,11 @@ export default function SpeakersPage() {
                     className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white py-2 rounded-xl font-semibold transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     <Save className="w-4 h-4" />
-                    {submitting ? "Saving..." : editingSpeaker ? "Update Speaker" : "Save Speaker"}
+                    {submitting
+                      ? "Saving..."
+                      : editingSpeaker
+                        ? "Update Speaker"
+                        : "Save Speaker"}
                   </button>
                   <button
                     type="button"
@@ -370,14 +549,34 @@ export default function SpeakersPage() {
         )}
 
         {/* Speakers Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {speakers.map((speaker) => (
+        <div
+          className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 ${isRearrangeMode ? "cursor-move" : ""}`}
+        >
+          {speakers.map((speaker, index) => (
             <div
               key={speaker._id}
-              className="group bg-gray-900/50 backdrop-blur-sm rounded-2xl overflow-hidden border border-purple-500/20 hover:border-purple-500/40 transition-all duration-300 hover:transform hover:scale-105 hover:shadow-2xl"
+              draggable={isRearrangeMode}
+              onDragStart={(e) => isRearrangeMode && handleDragStart(e, index)}
+              onDragOver={(e) => isRearrangeMode && handleDragOver(e, index)}
+              onDragLeave={handleDragLeave}
+              onDrop={(e) => isRearrangeMode && handleDrop(e, index)}
+              className={`group bg-gray-900/50 backdrop-blur-sm rounded-2xl overflow-hidden border transition-all duration-300 ${
+                isRearrangeMode
+                  ? `cursor-grab active:cursor-grabbing border-blue-500/50 hover:shadow-2xl ${
+                      dragOverIndex === index
+                        ? "border-blue-500 border-2 shadow-xl transform scale-105"
+                        : "border-purple-500/20"
+                    }`
+                  : "border-purple-500/20 hover:border-purple-500/40 hover:transform hover:scale-105 hover:shadow-2xl"
+              }`}
             >
               {/* Image Container */}
               <div className="relative h-72 overflow-hidden">
+                {isRearrangeMode && (
+                  <div className="absolute inset-0 bg-blue-500/20 backdrop-blur-sm z-10 flex items-center justify-center">
+                    <GripVertical className="w-12 h-12 text-white opacity-75" />
+                  </div>
+                )}
                 <img
                   src={speaker.imageUrl}
                   alt={speaker.name}
@@ -386,25 +585,25 @@ export default function SpeakersPage() {
                     e.currentTarget.src = "/placeholder-image.jpg";
                   }}
                 />
-                {/* Action Buttons */}
-                <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                  <button
-                    onClick={() => handleEditSpeaker(speaker)}
-                    className="bg-blue-500 hover:bg-blue-600 text-white p-2 rounded-full transition-all duration-300 shadow-lg"
-                    title="Edit Speaker"
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDeleteSpeaker(speaker._id)}
-                    className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-full transition-all duration-300 shadow-lg"
-                    title="Delete Speaker"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-                {/* Overlay Gradient */}
-                {/* <div className="absolute inset-0 bg-gradient-to-t from-gray-900 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div> */}
+                {/* Action Buttons - Hide in rearrange mode */}
+                {!isRearrangeMode && (
+                  <div className="absolute top-4 right-4 flex gap-2 transition-opacity duration-300">
+                    <button
+                      onClick={() => handleEditSpeaker(speaker)}
+                      className="bg-blue-500 hover:bg-blue-600 text-white p-2 rounded-full transition-all duration-300 shadow-lg"
+                      title="Edit Speaker"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteSpeaker(speaker._id)}
+                      className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-full transition-all duration-300 shadow-lg"
+                      title="Delete Speaker"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Content */}
@@ -412,10 +611,8 @@ export default function SpeakersPage() {
                 <h2 className="text-2xl font-bold text-white mb-1 group-hover:text-purple-400 transition-colors">
                   {speaker.name}
                 </h2>
-                <p className="text-purple-300 text-sm mb-4">
-                  {speaker.role}
-                </p>
-                
+                <p className="text-purple-300 text-sm mb-4">{speaker.role}</p>
+
                 <div className="border-t border-purple-500/20 pt-4">
                   <h3 className="text-lg font-semibold text-white mb-2">
                     Talk Topic
@@ -423,16 +620,16 @@ export default function SpeakersPage() {
                   <p className="text-purple-200 text-sm font-medium mb-2">
                     {speaker.talkTitle}
                   </p>
-                   <h3 className="text-lg font-semibold text-white mb-2">
+                  <h3 className="text-lg font-semibold text-white mb-2">
                     Abstract
                   </h3>
                   <p className="text-gray-300 text-sm leading-relaxed">
                     {speaker.abstract}
                   </p>
-                   <h3 className="text-lg font-semibold text-white mb-2">
+                  <h3 className="text-lg font-semibold text-white mb-2">
                     Biography of the speaker
                   </h3>
-                   <p className="text-gray-300 text-sm leading-relaxed">
+                  <p className="text-gray-300 text-sm leading-relaxed">
                     {speaker.bio}
                   </p>
                 </div>
@@ -465,7 +662,7 @@ export default function SpeakersPage() {
             opacity: 1;
           }
         }
-        
+
         @keyframes slideUp {
           from {
             transform: translateY(50px);
@@ -476,11 +673,11 @@ export default function SpeakersPage() {
             opacity: 1;
           }
         }
-        
+
         .animate-fadeIn {
           animation: fadeIn 0.3s ease-out;
         }
-        
+
         .animate-slideUp {
           animation: slideUp 0.4s ease-out;
         }

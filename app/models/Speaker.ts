@@ -4,6 +4,7 @@ export interface ISpeaker extends Document {
   name: string;
   role: string;
   imageFileId: mongoose.Types.ObjectId;
+  order: number;
   talkTitle: string;
   abstract: string;
   bio: string;
@@ -38,7 +39,12 @@ const SpeakerSchema = new Schema(
     bio:{
       type:String,
       default:"To be Updated Soon",
-    }
+    },
+
+    order: {
+    type: Number,
+    default: 0,
+  },
   },
   {
     timestamps: true,

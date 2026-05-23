@@ -74,7 +74,8 @@ export async function GET() {
   try {
     await dbConnect();
 
-    const speakers = await Speaker.find();
+    //const speakers = await Speaker.find();
+    const speakers = await Speaker.find().sort({ order: 1 });
 
     const transformed = speakers.map((speaker) => ({
       _id: speaker._id,
@@ -83,6 +84,7 @@ export async function GET() {
       talkTitle: speaker.talkTitle,
       abstract: speaker.abstract,
       bio: speaker.bio,
+      order: speaker.order,
 
       imageUrl:
         `/api/speakers/images/${speaker.imageFileId.toString()}`
