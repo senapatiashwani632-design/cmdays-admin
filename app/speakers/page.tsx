@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Pencil, Trash2, Plus, X, Save, GripVertical } from "lucide-react";
+import { useEffect, useState, useRef } from "react";
+import { Pencil, Trash2, Plus, X, Save, GripVertical, ArrowUp, ArrowDown } from "lucide-react";
 
 interface Speaker {
   _id: string;
@@ -21,6 +21,7 @@ export default function SpeakersPage() {
   const [editingSpeaker, setEditingSpeaker] = useState<Speaker | null>(null);
   const [isRearrangeMode, setIsRearrangeMode] = useState(false);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [touchStartIndex, setTouchStartIndex] = useState<number | null>(null);
   const [formData, setFormData] = useState({
     name: "",
     role: "",
@@ -31,16 +32,24 @@ export default function SpeakersPage() {
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
+  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
+
+  // Check if device is mobile
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   // Fetch speakers
   const fetchSpeakers = async () => {
     try {
       const res = await fetch("/api/speakers");
       if (!res.ok) throw new Error("Failed to fetch speakers");
-      // const data = await res.json();
-      // // Sort speakers by order
-      // const sortedSpeakers = data.sort((a: Speaker, b: Speaker) => (a.order || 0) - (b.order || 0));
-      // setSpeakers(sortedSpeakers);
       const data = await res.json();
       setSpeakers(data);
     } catch (error) {
@@ -86,7 +95,6 @@ export default function SpeakersPage() {
       formDataToSend.append("talkTitle", formData.talkTitle);
       formDataToSend.append("abstract", formData.abstract);
       formDataToSend.append("bio", formData.bio);
-      // Set order to the end of the list
       formDataToSend.append("order", String(speakers.length));
       if (formData.image) {
         formDataToSend.append("image", formData.image);
@@ -180,44 +188,21 @@ export default function SpeakersPage() {
     }
   };
 
-  // Drag and drop reordering
-  const handleDragStart = (e: React.DragEvent, index: number) => {
-    e.dataTransfer.setData("text/plain", String(index));
-    e.dataTransfer.effectAllowed = "move";
-  };
+  // Reorder speakers function
+  const reorderSpeakers = async (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return;
 
-  const handleDragOver = (e: React.DragEvent, index: number) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    setDragOverIndex(index);
-  };
-
-  const handleDragLeave = () => {
-    setDragOverIndex(null);
-  };
-
-  const handleDrop = async (e: React.DragEvent, dropIndex: number) => {
-    e.preventDefault();
-    setDragOverIndex(null);
-
-    const dragIndex = parseInt(e.dataTransfer.getData("text/plain"));
-    if (dragIndex === dropIndex) return;
-
-    // Create new order
     const newSpeakers = [...speakers];
-    const [draggedSpeaker] = newSpeakers.splice(dragIndex, 1);
-    newSpeakers.splice(dropIndex, 0, draggedSpeaker);
+    const [draggedSpeaker] = newSpeakers.splice(fromIndex, 1);
+    newSpeakers.splice(toIndex, 0, draggedSpeaker);
 
-    // Update order numbers
     const updatedSpeakers = newSpeakers.map((speaker, idx) => ({
       ...speaker,
       order: idx,
     }));
 
-    // Update UI immediately
     setSpeakers(updatedSpeakers);
 
-    // Save to database
     try {
       const updates = updatedSpeakers.map((speaker, idx) => ({
         id: speaker._id,
@@ -238,9 +223,81 @@ export default function SpeakersPage() {
     } catch (error) {
       console.error("Error updating speaker order:", error);
       setError("Failed to save new order. Please try again.");
-      // Revert to original order on error
       await fetchSpeakers();
       setTimeout(() => setError(null), 3000);
+    }
+  };
+
+  // Desktop drag and drop
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    e.dataTransfer.setData("text/plain", String(index));
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverIndex(index);
+  };
+
+  const handleDragLeave = () => {
+    setDragOverIndex(null);
+  };
+
+  const handleDrop = async (e: React.DragEvent, dropIndex: number) => {
+    e.preventDefault();
+    setDragOverIndex(null);
+    const dragIndex = parseInt(e.dataTransfer.getData("text/plain"));
+    await reorderSpeakers(dragIndex, dropIndex);
+  };
+
+  // Mobile touch events
+  const handleTouchStart = (e: React.TouchEvent, index: number) => {
+    if (!isRearrangeMode) return;
+    
+    longPressTimer.current = setTimeout(() => {
+      setTouchStartIndex(index);
+      // Vibrate if supported
+      if (navigator.vibrate) navigator.vibrate(50);
+    }, 500);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent, index: number) => {
+    if (!isRearrangeMode || touchStartIndex === null) return;
+    
+    e.preventDefault();
+    const touch = e.touches[0];
+    const elements = document.elementsFromPoint(touch.clientX, touch.clientY);
+    const targetCard = elements.find(el => el.hasAttribute?.('data-speaker-index'));
+    
+    if (targetCard) {
+      const targetIndex = parseInt(targetCard.getAttribute('data-speaker-index') || '-1');
+      if (targetIndex !== -1 && targetIndex !== touchStartIndex) {
+        reorderSpeakers(touchStartIndex, targetIndex);
+        setTouchStartIndex(targetIndex);
+        if (navigator.vibrate) navigator.vibrate(20);
+      }
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    setTouchStartIndex(null);
+  };
+
+  // Move up/down buttons for mobile
+  const moveSpeakerUp = async (index: number) => {
+    if (index > 0) {
+      await reorderSpeakers(index, index - 1);
+    }
+  };
+
+  const moveSpeakerDown = async (index: number) => {
+    if (index < speakers.length - 1) {
+      await reorderSpeakers(index, index + 1);
     }
   };
 
@@ -279,6 +336,7 @@ export default function SpeakersPage() {
   const toggleRearrangeMode = () => {
     setIsRearrangeMode(!isRearrangeMode);
     setDragOverIndex(null);
+    setTouchStartIndex(null);
   };
 
   const saveRearrangeOrder = async () => {
@@ -302,7 +360,7 @@ export default function SpeakersPage() {
 
       setError(null);
       setIsRearrangeMode(false);
-      // Show success message
+      
       const successMsg = document.createElement("div");
       successMsg.className =
         "fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg animate-fadeIn";
@@ -312,7 +370,7 @@ export default function SpeakersPage() {
     } catch (error) {
       console.error("Error saving order:", error);
       setError("Failed to save order. Please try again.");
-      await fetchSpeakers(); // Revert to original order
+      await fetchSpeakers();
       setTimeout(() => setError(null), 3000);
     }
   };
@@ -332,19 +390,19 @@ export default function SpeakersPage() {
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900">
       {/* Header */}
       <div className="bg-black/50 backdrop-blur-lg sticky top-0 z-10 border-b border-purple-500/20">
-        <div className="container mx-auto px-6 py-6">
-          <div className="flex justify-between items-center">
+        <div className="container mx-auto px-4 sm:px-6 py-4 sm:py-6">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
-              <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+              <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
                 Conference Speakers
               </h1>
-              <p className="text-gray-300 mt-2">
+              <p className="text-gray-300 text-sm sm:text-base mt-1 sm:mt-2">
                 {isRearrangeMode
-                  ? "Drag and drop to reorder speakers"
+                  ? isMobile ? "Long press and drag to reorder, or use arrow buttons" : "Drag and drop to reorder speakers"
                   : "Meet our distinguished speakers"}
               </p>
             </div>
-            <div className="flex gap-3">
+            <div className="flex gap-2 sm:gap-3 w-full sm:w-auto">
               {!isRearrangeMode && (
                 <button
                   onClick={() => {
@@ -353,10 +411,11 @@ export default function SpeakersPage() {
                     resetForm();
                     setError(null);
                   }}
-                  className="group bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white px-6 py-3 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105"
+                  className="flex-1 sm:flex-none bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white px-4 sm:px-6 py-2 sm:py-3 rounded-xl font-semibold transition-all duration-300 flex items-center justify-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105 text-sm sm:text-base"
                 >
-                  <Plus className="w-5 h-5" />
-                  Add New Speaker
+                  <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
+                  <span className="hidden sm:inline">Add New Speaker</span>
+                  <span className="sm:hidden">Add</span>
                 </button>
               )}
               {speakers.length > 0 && (
@@ -364,7 +423,7 @@ export default function SpeakersPage() {
                   onClick={
                     isRearrangeMode ? saveRearrangeOrder : toggleRearrangeMode
                   }
-                  className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105 ${
+                  className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 sm:py-3 rounded-xl font-semibold transition-all duration-300 flex items-center justify-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105 text-sm sm:text-base ${
                     isRearrangeMode
                       ? "bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white"
                       : "bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white"
@@ -372,13 +431,15 @@ export default function SpeakersPage() {
                 >
                   {isRearrangeMode ? (
                     <>
-                      <Save className="w-5 h-5" />
-                      Save Order
+                      <Save className="w-4 h-4 sm:w-5 sm:h-5" />
+                      <span className="hidden sm:inline">Save Order</span>
+                      <span className="sm:hidden">Save</span>
                     </>
                   ) : (
                     <>
-                      <GripVertical className="w-5 h-5" />
-                      Rearrange
+                      <GripVertical className="w-4 h-4 sm:w-5 sm:h-5" />
+                      <span className="hidden sm:inline">Rearrange</span>
+                      <span className="sm:hidden">Reorder</span>
                     </>
                   )}
                 </button>
@@ -386,10 +447,11 @@ export default function SpeakersPage() {
               {isRearrangeMode && (
                 <button
                   onClick={toggleRearrangeMode}
-                  className="px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105"
+                  className="flex-1 sm:flex-none px-4 sm:px-6 py-2 sm:py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-xl font-semibold transition-all duration-300 flex items-center justify-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-105 text-sm sm:text-base"
                 >
-                  <X className="w-5 h-5" />
-                  Cancel
+                  <X className="w-4 h-4 sm:w-5 sm:h-5" />
+                  <span className="hidden sm:inline">Cancel</span>
+                  <span className="sm:hidden">Cancel</span>
                 </button>
               )}
             </div>
@@ -399,26 +461,26 @@ export default function SpeakersPage() {
 
       {/* Error Message */}
       {error && (
-        <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-red-500 text-white px-6 py-3 rounded-lg shadow-lg animate-fadeIn">
+        <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-red-500 text-white px-4 sm:px-6 py-2 sm:py-3 rounded-lg shadow-lg animate-fadeIn text-sm sm:text-base">
           {error}
         </div>
       )}
 
       {/* Main Content */}
-      <div className="container mx-auto px-6 py-12">
+      <div className="container mx-auto px-4 sm:px-6 py-8 sm:py-12">
         {/* Add/Edit Form Modal */}
         {(showAddForm || editingSpeaker) && (
           <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
             <div className="bg-gray-900 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-purple-500/30 shadow-2xl animate-slideUp">
-              <div className="sticky top-0 bg-gray-900 border-b border-purple-500/20 px-6 py-4 flex justify-between items-center">
-                <h2 className="text-2xl font-bold text-white">
+              <div className="sticky top-0 bg-gray-900 border-b border-purple-500/20 px-4 sm:px-6 py-4 flex justify-between items-center">
+                <h2 className="text-xl sm:text-2xl font-bold text-white">
                   {editingSpeaker ? "Edit Speaker" : "Add New Speaker"}
                 </h2>
                 <button
                   onClick={cancelForm}
                   className="text-gray-400 hover:text-white transition-colors"
                 >
-                  <X className="w-6 h-6" />
+                  <X className="w-5 h-5 sm:w-6 sm:h-6" />
                 </button>
               </div>
 
@@ -426,7 +488,7 @@ export default function SpeakersPage() {
                 onSubmit={
                   editingSpeaker ? handleUpdateSpeaker : handleCreateSpeaker
                 }
-                className="p-6 space-y-5"
+                className="p-4 sm:p-6 space-y-4 sm:space-y-5"
               >
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -438,7 +500,7 @@ export default function SpeakersPage() {
                     value={formData.name}
                     onChange={handleInputChange}
                     required
-                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-3 sm:px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm sm:text-base"
                     placeholder="Dr. John Doe"
                   />
                 </div>
@@ -453,7 +515,7 @@ export default function SpeakersPage() {
                     value={formData.role}
                     onChange={handleInputChange}
                     required
-                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-3 sm:px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm sm:text-base"
                     placeholder="University Name, Country"
                   />
                 </div>
@@ -467,7 +529,7 @@ export default function SpeakersPage() {
                     name="talkTitle"
                     value={formData.talkTitle}
                     onChange={handleInputChange}
-                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-3 sm:px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm sm:text-base"
                     placeholder="Talk Title"
                   />
                 </div>
@@ -481,7 +543,7 @@ export default function SpeakersPage() {
                     value={formData.abstract}
                     onChange={handleInputChange}
                     rows={4}
-                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-3 sm:px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm sm:text-base"
                     placeholder="Abstract of the talk..."
                   />
                 </div>
@@ -494,7 +556,7 @@ export default function SpeakersPage() {
                     value={formData.bio}
                     onChange={handleInputChange}
                     rows={4}
-                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-3 sm:px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm sm:text-base"
                     placeholder="Biography of the speaker..."
                   />
                 </div>
@@ -518,7 +580,7 @@ export default function SpeakersPage() {
                     onChange={handleFileChange}
                     accept="image/*"
                     required={!editingSpeaker}
-                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-purple-500 file:text-white hover:file:bg-purple-600"
+                    className="w-full px-3 sm:px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm sm:text-base file:mr-2 sm:file:mr-4 file:py-1 sm:file:py-2 file:px-2 sm:file:px-4 file:rounded-lg file:border-0 file:text-xs sm:file:text-sm file:font-semibold file:bg-purple-500 file:text-white hover:file:bg-purple-600"
                   />
                 </div>
 
@@ -526,7 +588,7 @@ export default function SpeakersPage() {
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white py-2 rounded-xl font-semibold transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white py-2 rounded-xl font-semibold transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm sm:text-base"
                   >
                     <Save className="w-4 h-4" />
                     {submitting
@@ -538,7 +600,7 @@ export default function SpeakersPage() {
                   <button
                     type="button"
                     onClick={cancelForm}
-                    className="px-6 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-xl font-semibold transition-all duration-300"
+                    className="px-4 sm:px-6 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-xl font-semibold transition-all duration-300 text-sm sm:text-base"
                   >
                     Cancel
                   </button>
@@ -550,16 +612,20 @@ export default function SpeakersPage() {
 
         {/* Speakers Grid */}
         <div
-          className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 ${isRearrangeMode ? "cursor-move" : ""}`}
+          className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 md:gap-8 ${isRearrangeMode ? "cursor-move" : ""}`}
         >
           {speakers.map((speaker, index) => (
             <div
               key={speaker._id}
-              draggable={isRearrangeMode}
-              onDragStart={(e) => isRearrangeMode && handleDragStart(e, index)}
-              onDragOver={(e) => isRearrangeMode && handleDragOver(e, index)}
+              data-speaker-index={index}
+              draggable={!isMobile && isRearrangeMode}
+              onDragStart={(e) => !isMobile && isRearrangeMode && handleDragStart(e, index)}
+              onDragOver={(e) => !isMobile && isRearrangeMode && handleDragOver(e, index)}
               onDragLeave={handleDragLeave}
-              onDrop={(e) => isRearrangeMode && handleDrop(e, index)}
+              onDrop={(e) => !isMobile && isRearrangeMode && handleDrop(e, index)}
+              onTouchStart={(e) => isMobile && handleTouchStart(e, index)}
+              onTouchMove={(e) => isMobile && handleTouchMove(e, index)}
+              onTouchEnd={handleTouchEnd}
               className={`group bg-gray-900/50 backdrop-blur-sm rounded-2xl overflow-hidden border transition-all duration-300 ${
                 isRearrangeMode
                   ? `cursor-grab active:cursor-grabbing border-blue-500/50 hover:shadow-2xl ${
@@ -571,10 +637,10 @@ export default function SpeakersPage() {
               }`}
             >
               {/* Image Container */}
-              <div className="relative h-72 overflow-hidden">
+              <div className="relative h-48 sm:h-56 md:h-64 lg:h-72 overflow-hidden">
                 {isRearrangeMode && (
                   <div className="absolute inset-0 bg-blue-500/20 backdrop-blur-sm z-10 flex items-center justify-center">
-                    <GripVertical className="w-12 h-12 text-white opacity-75" />
+                    <GripVertical className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 text-white opacity-75" />
                   </div>
                 )}
                 <img
@@ -587,51 +653,73 @@ export default function SpeakersPage() {
                 />
                 {/* Action Buttons - Hide in rearrange mode */}
                 {!isRearrangeMode && (
-                  <div className="absolute top-4 right-4 flex gap-2 transition-opacity duration-300">
+                  <div className="absolute top-2 right-2 sm:top-4 sm:right-4 flex gap-1 sm:gap-2 transition-opacity duration-300">
                     <button
                       onClick={() => handleEditSpeaker(speaker)}
-                      className="bg-blue-500 hover:bg-blue-600 text-white p-2 rounded-full transition-all duration-300 shadow-lg"
+                      className="bg-blue-500 hover:bg-blue-600 text-white p-1.5 sm:p-2 rounded-full transition-all duration-300 shadow-lg"
                       title="Edit Speaker"
                     >
-                      <Pencil className="w-4 h-4" />
+                      <Pencil className="w-3 h-3 sm:w-4 sm:h-4" />
                     </button>
                     <button
                       onClick={() => handleDeleteSpeaker(speaker._id)}
-                      className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-full transition-all duration-300 shadow-lg"
+                      className="bg-red-500 hover:bg-red-600 text-white p-1.5 sm:p-2 rounded-full transition-all duration-300 shadow-lg"
                       title="Delete Speaker"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3 h-3 sm:w-4 sm:h-4" />
                     </button>
                   </div>
                 )}
               </div>
 
               {/* Content */}
-              <div className="p-6">
-                <h2 className="text-2xl font-bold text-white mb-1 group-hover:text-purple-400 transition-colors">
+              <div className="p-4 sm:p-5 md:p-6">
+                <h2 className="text-xl sm:text-2xl font-bold text-white mb-1 group-hover:text-purple-400 transition-colors">
                   {speaker.name}
                 </h2>
-                <p className="text-purple-300 text-sm mb-4">{speaker.role}</p>
+                <p className="text-purple-300 text-xs sm:text-sm mb-3 sm:mb-4">{speaker.role}</p>
 
-                <div className="border-t border-purple-500/20 pt-4">
-                  <h3 className="text-lg font-semibold text-white mb-2">
+                <div className="border-t border-purple-500/20 pt-3 sm:pt-4">
+                  <h3 className="text-base sm:text-lg font-semibold text-white mb-1 sm:mb-2">
                     Talk Topic
                   </h3>
-                  <p className="text-purple-200 text-sm font-medium mb-2">
+                  <p className="text-purple-200 text-xs sm:text-sm font-medium mb-2 sm:mb-3">
                     {speaker.talkTitle}
                   </p>
-                  <h3 className="text-lg font-semibold text-white mb-2">
+                  <h3 className="text-base sm:text-lg font-semibold text-white mb-1 sm:mb-2">
                     Abstract
                   </h3>
-                  <p className="text-gray-300 text-sm leading-relaxed">
+                  <p className="text-gray-300 text-xs sm:text-sm leading-relaxed line-clamp-3">
                     {speaker.abstract}
                   </p>
-                  <h3 className="text-lg font-semibold text-white mb-2">
-                    Biography of the speaker
+                  <h3 className="text-base sm:text-lg font-semibold text-white mt-3 sm:mt-4 mb-1 sm:mb-2">
+                    Biography
                   </h3>
-                  <p className="text-gray-300 text-sm leading-relaxed">
+                  <p className="text-gray-300 text-xs sm:text-sm leading-relaxed line-clamp-3">
                     {speaker.bio}
                   </p>
+                  
+                  {/* Mobile reorder buttons */}
+                  {isRearrangeMode && isMobile && (
+                    <div className="flex justify-between gap-2 mt-4 pt-3 border-t border-purple-500/20">
+                      <button
+                        onClick={() => moveSpeakerUp(index)}
+                        disabled={index === 0}
+                        className="flex-1 bg-blue-500/20 hover:bg-blue-500/30 disabled:opacity-30 disabled:cursor-not-allowed text-blue-400 py-2 rounded-lg flex items-center justify-center gap-2 transition-all"
+                      >
+                        <ArrowUp className="w-4 h-4" />
+                        <span className="text-sm">Move Up</span>
+                      </button>
+                      <button
+                        onClick={() => moveSpeakerDown(index)}
+                        disabled={index === speakers.length - 1}
+                        className="flex-1 bg-blue-500/20 hover:bg-blue-500/30 disabled:opacity-30 disabled:cursor-not-allowed text-blue-400 py-2 rounded-lg flex items-center justify-center gap-2 transition-all"
+                      >
+                        <ArrowDown className="w-4 h-4" />
+                        <span className="text-sm">Move Down</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -640,13 +728,13 @@ export default function SpeakersPage() {
 
         {/* Empty State */}
         {speakers.length === 0 && (
-          <div className="text-center py-20">
-            <div className="text-gray-400 text-lg mb-4">No speakers found</div>
+          <div className="text-center py-12 sm:py-20">
+            <div className="text-gray-400 text-base sm:text-lg mb-4">No speakers found</div>
             <button
               onClick={() => setShowAddForm(true)}
-              className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-3 rounded-xl font-semibold hover:from-purple-600 hover:to-pink-600 transition-all duration-300 inline-flex items-center gap-2"
+              className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 sm:px-6 py-2 sm:py-3 rounded-xl font-semibold hover:from-purple-600 hover:to-pink-600 transition-all duration-300 inline-flex items-center gap-2 text-sm sm:text-base"
             >
-              <Plus className="w-5 h-5" />
+              <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
               Add Your First Speaker
             </button>
           </div>
@@ -680,6 +768,13 @@ export default function SpeakersPage() {
 
         .animate-slideUp {
           animation: slideUp 0.4s ease-out;
+        }
+
+        .line-clamp-3 {
+          display: -webkit-box;
+          -webkit-line-clamp: 3;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
         }
       `}</style>
     </div>
