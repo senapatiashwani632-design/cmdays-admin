@@ -726,7 +726,7 @@ export default function SpeakersPage() {
           ))}
         </div>
 
-        {/* Empty State */}
+     
         {speakers.length === 0 && (
           <div className="text-center py-12 sm:py-20">
             <div className="text-gray-400 text-base sm:text-lg mb-4">No speakers found</div>
