@@ -75,7 +75,7 @@ export async function GET() {
     await dbConnect();
 
     //const speakers = await Speaker.find();
-    const speakers = await Speaker.find().sort({ order: 1 });
+    const speakers = await Speaker.find().lean().sort({ order: 1 });
 
     const transformed = speakers.map((speaker) => ({
       _id: speaker._id,
