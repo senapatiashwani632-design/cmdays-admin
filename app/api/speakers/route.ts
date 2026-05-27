@@ -70,11 +70,40 @@ export async function POST(req: NextRequest) {
   }
 }
 
+// export async function GET() {
+//   try {
+//     await dbConnect();
+
+//     //const speakers = await Speaker.find();
+//     const speakers = await Speaker.find().lean().sort({ order: 1 });
+
+//     const transformed = speakers.map((speaker) => ({
+//       _id: speaker._id,
+//       name: speaker.name,
+//       role: speaker.role,
+//       talkTitle: speaker.talkTitle,
+//       abstract: speaker.abstract,
+//       bio: speaker.bio,
+//       order: speaker.order,
+
+//       imageUrl:
+//         `/api/speakers/images/${speaker.imageFileId.toString()}`
+//     }));
+
+//     return NextResponse.json(transformed);
+
+//   } catch (error) {
+//     console.error(error);
+
+//     return NextResponse.json(
+//       { error: "Internal Server Error" },
+//       { status: 500 }
+//     );
+//   }
+// }
 export async function GET() {
   try {
     await dbConnect();
-
-    //const speakers = await Speaker.find();
     const speakers = await Speaker.find().lean().sort({ order: 1 });
 
     const transformed = speakers.map((speaker) => ({
@@ -85,19 +114,30 @@ export async function GET() {
       abstract: speaker.abstract,
       bio: speaker.bio,
       order: speaker.order,
-
-      imageUrl:
-        `/api/speakers/images/${speaker.imageFileId.toString()}`
+      imageUrl: `/api/speakers/images/${speaker.imageFileId.toString()}`,
     }));
 
-    return NextResponse.json(transformed);
+    return NextResponse.json(transformed, {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Accept",
+      },
+    });
 
   } catch (error) {
     console.error(error);
-
-    return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
+}
+
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Accept",
+    },
+  });
 }
