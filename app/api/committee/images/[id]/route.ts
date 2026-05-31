@@ -60,6 +60,7 @@ export async function GET(
           new Response(buffer, {
             headers: {
               "Content-Type": files[0]?.metadata?.contentType || "image/jpeg",
+              "Cache-Control": "public, max-age=31536000, immutable",
             },
           }),
         );
